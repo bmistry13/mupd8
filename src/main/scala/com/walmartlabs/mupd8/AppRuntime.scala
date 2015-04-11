@@ -226,8 +226,9 @@ class AppRuntime(appID: Int,
   val maxWorkerCount = 2 * Runtime.getRuntime.availableProcessors
   val slateURLserver = new HttpServer(appStatic.statusPort, maxWorkerCount, s => {
     val decoded = java.net.URLDecoder.decode(s, "UTF-8")
+    info("Decoded URL is " + decoded)
     val tok = decoded.split('/')
-    if (tok(1) == "favicon.ico") None
+    if ( tok.length < 2 || tok(1) == "favicon.ico") None
     else if (tok(2) == "status") {
       excToOptionWithLog {
         Some(threadVect.map { p =>
@@ -300,9 +301,15 @@ class AppRuntime(appID: Int,
             Some(rlt.substring(0, rlt.length - 1).concat("\n").getBytes)
           }
       }
-    } else if (tok(2) == "messageserver") {
+    }else if(tok(2) == "localsources"){ 
+     Some(({"Total Sources Started: " + startedSourcesOnThisNode.size + 
+       "\n" +  startedSourcesOnThisNode.mkString("[", ", ", "]")}).getBytes())
+    }else if (tok(2) == "messageserver") {
       Some((messageServerHost.toString + "\n").getBytes())
-    } else {
+    }else if (Mupd8StatusAndShutdownUtill.isSupportedEndPoint(tok(2))) {
+      val response:Option[String] = Option(Mupd8StatusAndShutdownUtill.handleHttpRequest(tok(2)))
+      Some(response.getOrElse("No Response !!").getBytes)
+  	}else {
       // This section currently handle varnish probe -- /mupd8/config/app
       // TODO: how to handle other requests?
       Some("{}".getBytes)
@@ -361,6 +368,7 @@ class AppRuntime(appID: Int,
   def startSource(sourceName: String): Boolean = {
     startSourceLock.synchronized {
       if (!startedSourcesOnThisNode.contains(sourceName)) {
+        info("List is " + appStatic.sources.asScala.toString); 
         val source = appStatic.sources.asScala.toList.find(s => sourceName.compareTo(s.get("name").asInstanceOf[String]) == 0)
         source match {
           case Some(source: org.json.simple.JSONObject) =>

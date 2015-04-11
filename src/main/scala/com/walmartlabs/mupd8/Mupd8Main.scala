@@ -17,18 +17,26 @@
 
 package com.walmartlabs.mupd8
 
-import scala.collection.immutable
-import scala.collection.mutable
-import scala.collection.breakOut
-import scala.collection.JavaConverters._
-import scala.collection.JavaConversions._
-import scala.actors.Actor
 import java.util.ArrayList
+
+import scala.Option.option2Iterable
+import scala.actors.Actor
+import scala.collection.JavaConversions.seqAsJavaList
+import scala.collection.JavaConverters.asScalaBufferConverter
+import scala.collection.JavaConverters.mapAsScalaMapConverter
+import scala.collection.breakOut
+
 import org.scale7.cassandra.pelops.Mutator
+
+import com.walmartlabs.mupd8.Misc.SlateObject
+import com.walmartlabs.mupd8.Misc.argParser
+import com.walmartlabs.mupd8.Misc.isLocalHost
+import com.walmartlabs.mupd8.Misc.writePID
+import com.walmartlabs.mupd8.Mupd8Type.Mupd8Type
+import com.walmartlabs.mupd8.application.Config
+import com.walmartlabs.mupd8.application.binary
+
 import grizzled.slf4j.Logging
-import com.walmartlabs.mupd8.application._
-import com.walmartlabs.mupd8.Misc._
-import com.walmartlabs.mupd8.Mupd8Type._
 
 case class Host(ip: String, hostname: String)
 
@@ -94,6 +102,9 @@ class UpdaterFactory[U <: binary.Updater](val updaterType : Class[U]) {
 }
 
 object Mupd8Main extends Logging {
+  
+  var RUNTIME : AppRuntime = null;
+  var STATICINFO : AppStaticInfo = null;
 
   def main(args: Array[String]) {
     info("Mupd8 is starting ...")
@@ -123,6 +134,9 @@ object Mupd8Main extends Logging {
     }
 
     val runtime = new AppRuntime(0, threads, appStatic)
+    RUNTIME = runtime;
+    STATICINFO = appStatic;
+    
     if (runtime.ring != null) {
       if (appStatic.sources.size > 0) {
         startSources(appStatic, runtime)
@@ -133,7 +147,7 @@ object Mupd8Main extends Logging {
     } else {
       error("Mupd8Main: no hash ring found, exiting...")
     }
-    info("Initialization is done")
+    info("Initialization is done")    
   }
 
   def startSources(app: AppStaticInfo, runtime: AppRuntime) {
@@ -143,7 +157,7 @@ object Mupd8Main extends Logging {
         client.sendMessage(AskPermitToStartSourceMessage(sourceName, runtime.self))
       }
     }
-
+    var sourcesStarted : Set[String] = Set()
     val ssources = app.sources.asScala
     info("start source from sys cfg")
     ssources.foreach { source =>
@@ -152,8 +166,58 @@ object Mupd8Main extends Logging {
         val sourceName = source.get("name").asInstanceOf[String]
         val askPermit = new AskPermit(sourceName)
         askPermit.start
+        sourcesStarted += sourceName
       }
     }
-  }
 
+    class DynamicSource(threadName: String) extends Actor {
+      
+     var attemptedSourceName:String = null; 
+     
+      def act() {
+        
+        info("Dynamic soruces ["+threadName+"] background Thread started..now");
+        var count: Int = 0;
+        while (true) {
+          try {
+            try {
+              Thread.sleep(5000);
+            } catch {
+              case exp: InterruptedException =>
+                error("Interuppted Exception while starting dynamic sources ignore");
+            }
+            info("Dynamic soruces ["+threadName+"] started so far on this node is " + count);
+	         val newSources = app.sources.asScala           
+	         newSources.foreach { source =>
+	              if (source != null
+	                && isLocalHost(source.get("host").asInstanceOf[String]) && !runtime.startedSourcesOnThisNode.contains(source.get("name").asInstanceOf[String]) ) {
+	            	  info("Start Dynamic source ["+threadName+"]  after main soruce is started.- " + source + " on this node.")
+	            	  val sourceName = source.get("name").asInstanceOf[String]
+	            	  attemptedSourceName = sourceName;
+	            	  // DO NOT ASK FOR PERMISIOSN JUST START FOR NOW NO MSG SERVER PERMISSION...
+	            	  val started = runtime.startSource(sourceName)
+	            	  // count the source started on this node
+	            	  if(started &&  runtime.startedSources.get(sourceName) != null){
+	            		  if(!sourcesStarted.contains(sourceName) && runtime.startedSourcesOnThisNode.contains(sourceName)){
+	            			  sourcesStarted += sourceName;
+	            			  count = count +1;
+	            		  }
+	            	  }
+	            	  
+	              }
+	              attemptedSourceName = null;
+	         }
+
+          } catch {
+            case w: Throwable => error("WARN Occured while starting Dynamic Soruces..it is ok to ignore next run will try again Source_Name ="+ attemptedSourceName, w);
+          }
+        }
+      }
+    }
+    info("Trying to start DynamicSource_Thread background Thread");
+    val dynamicSourceStarted = new DynamicSource("DynamicSource_Thread"); 
+    dynamicSourceStarted.start;
+    info("Trying to start DynamicSource_Thread background Thread start called");
+  }
+ 
 }

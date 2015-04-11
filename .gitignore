@@ -35,3 +35,5 @@ target
 mupd8.log
 *.iml
 .idea
+
+pom.xml.versionsBackup

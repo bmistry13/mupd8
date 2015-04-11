@@ -108,6 +108,14 @@ object Misc extends Logging {
     val address = InetAddress.getByName(hostName).getHostAddress()
     localIPAddresses.exists(_ == address)
   }
+  
+  def getLocalHost() = {
+	if(localIPAddresses.length > 0){
+		localIPAddresses.iterator.next
+	}else{
+		""
+	}
+  } 
 
   val INTMAX: Long = Int.MaxValue.toLong
   val HASH_BASE: Long = Int.MaxValue.toLong - Int.MinValue.toLong
